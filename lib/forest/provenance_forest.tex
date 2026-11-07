@@ -34,7 +34,9 @@ compared, for example the same 9,941 sub-hypotheses of $a^3b^3$ at clause limit 
 
 \section{The problem}
 
-Poker's generalisation step takes an example $e$, background knowledge $B$, a set of
+Poker is the self-supervised grammar learner of the Vanilla framework for
+meta-interpretive learning~\cite{vanilla}, with Louise~\cite{louise}. Its
+generalisation step takes an example $e$, background knowledge $B$, a set of
 metarules, a signature (the target predicate and the invented predicates) and a
 clause limit $K$. Each refutation of $e$ resolves goals either against $B$ or against
 an instance of a metarule; each such instance is a \emph{metasubstitution} $\sigma$,
@@ -49,7 +51,7 @@ contains it. Tabling the meta-interpreter does not recover the sharing: two call
 the same goal with different stores are different calls. On $a^4b^4$ at clause limit
 7 Poker spends 5.13 billion inferences to produce 18 sets.
 
-\section{The decomposition}
+\section{The decomposition}\label{sec:decomposition}
 
 A refutation is a tree. Its root is a metasubstitution $\sigma$ whose head matches
 the goal; its children are refutations of the body literals of $\sigma$; its leaves
@@ -137,7 +139,7 @@ symbols; the constraints compare symbols with \texttt{==}, so that a symbol not 
 bound passes. A constraint on one metasubstitution removes edges from the forest and does
 not interact with the decomposition.
 
-\section{Behind Poker's API}
+\section{Behind Poker's API}\label{sec:poker}
 
 The forest reads a Vanilla MIL problem as Poker does: the encapsulated metarules,
 the background knowledge Vanilla writes to the \texttt{user} module, the
@@ -152,11 +154,41 @@ apply.
 
 The forest applies where Vanilla resolves goals against background knowledge and
 metarules only (\texttt{fetch\_clauses} without \texttt{hypothesis}), keeps every
-proof, and generalises examples one at a time without threads. Several of Poker's
-experiments are written that way ($a^nb^n$, parity, and the experiment scripts for
-the binary and weak Chomsky--Greibach and the Lindenmayer normal forms); others use
-Vanilla's default, which also resolves goals against hypothesis clauses already
-built.
+proof, and generalises examples one at a time without threads. Some of Poker's
+experiment settings are written that way: $a^nb^n$, parity, the \emph{even} setting of
+the weak Chomsky--Greibach script, the \emph{palindrome\_bin\_ng} setting of the binary
+script, and five settings of the Lindenmayer script. Most of the others, hello world
+and almost all of the Chomsky--Greibach grammars among them, use Vanilla's default,
+which also resolves goals against hypothesis clauses already built. There the
+clause limit bounds the distinct metasubstitutions of a refutation, not its steps,
+and size is no longer additive; the sub-hypotheses without reuse are a strict subset
+of Poker's (hello world: 16 of 18; the Chomsky--Greibach parentheses: 64 of 256).
+
+\paragraph{With reuse.} The forest then computes the least fixpoint of the same
+recurrence without sizes: a goal's supports are the sets $\{\sigma\} \cup S_1 \cup
+\cdots \cup S_m$ of at most $K$ metasubstitutions, over clauses
+$\sigma : g \leftarrow g_1, \ldots, g_m$ and supports $S_i$ of the $g_i$, and of
+background facts the empty set. SWI-Prolog's tabling computes it, cycles included,
+each literal tabled as its call pattern;
+it is finite because supports are bounded sets over finitely many
+metasubstitutions. The invention state is threaded in Vanilla's depth-first order
+as before: a clause headed by the $i$-th invented predicate is introduced only once
+the $(i{-}1)$-th is available, and a clause met again passes, its head already
+available. A check on the set alone (that the inventions used are $inv_1$ to $inv_j$)
+is too weak: it admits 342 sub-hypotheses for the parentheses where Poker has 256.
+
+\begin{theorem}[the bounded fixpoint characterises the supports with reuse]
+For a ground derivation forest and a bound $K$, the least family closed under the
+recurrence without sizes, every support and every partial union of a body kept
+within $K$ labels, is exactly the set of supports of derivation trees with at most
+$K$ labels; a label may occur any number of times in a tree.
+\end{theorem}
+
+The proof is by induction both ways: a subtree's support is part of its tree's, so
+the bound prunes no tree whose support stays within it. It is machine-checked in
+Lean~4 with Mathlib, with Lean's standard axioms only, beside the theorem of
+Section~\ref{sec:decomposition}; that the depth-first invention state makes the forest's
+items correspond to Vanilla's refutations is checked against Poker, not proved.
 
 \section{Why-provenance}
 
@@ -208,6 +240,27 @@ exact.}
 \label{tab:results}
 \end{table}
 
+With hypothesis reuse, Vanilla's default, the two outputs are identical on
+Poker's hello world and on four Chomsky--Greibach settings, with Poker's own
+unfolding of invented predicates applied to both:
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Problem (reuse) & Sub-hypotheses & Poker & Forest\\
+\midrule
+hello world, $K=2$                 & 18  & 4.4\,ms  & 0.8\,ms\\
+C--GNF $a^nb^n$, $K=3$             & 18  & 56\,ms   & 35\,ms\\
+C--GNF $a^nb^m$, $K=4$             & 70  & 102\,ms  & 11\,ms\\
+C--GNF even parity, $K=5$          & 508 & 3.2\,s   & 0.14\,s\\
+C--GNF parentheses, $K=4$          & 203 & 1.60\,s  & 1.51\,s\\
+\bottomrule
+\end{tabular}
+\caption{Poker against the forest with hypothesis reuse (single runs).}
+\label{tab:reuse}
+\end{table}
+
 On 80 random grammar-learning problems (terminals, metarules among Identity, Chain
 and Tri-chain, constraints, one example string of length 0 to 5, clause limits 1 to 4,
 0 to 2 invented predicates) the two outputs are identical in all 80: 50 have
@@ -217,6 +270,50 @@ even parity, with an invented predicate, on the forest as on Vanilla, in 173\,ms
 against 629\,ms. Without Poker's post-processing the forest computes the supports of
 $a^5b^5$ at $K = 9$ in 16\,ms and of $a^7b^7$ at $K = 13$ in 67\,ms.
 
+Table~\ref{tab:survey} goes beyond Poker's own experiments, to task files written for
+Poker's setting from other benchmarks: the regular and context-free tasks of
+Del\'etang et~al.'s \emph{Neural Networks and the Chomsky Hierarchy}~\cite{deletang},
+with and without Chomsky--Greibach normal-form metarules; the kinship, robot and
+points-to tasks of Popper's suite~\cite{popper}; list membership from Hopper's
+suite~\cite{hopper}; Louise's even and odd~\cite{vanilla}; and a probe of the
+Inverse metarule. Each runs with its own clause limit and without reuse. The outputs
+are identical on the 13 tasks Poker finishes within 200\,s. On the other three the
+forest alone was run.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Task & Sub-hypotheses & Poker & Forest\\
+\midrule
+reverse string                      & 18,959 & 92.1\,s  & 1.50\,s\\
+parity check                        & 21,740 & 32.6\,s  & 1.57\,s\\
+even pairs, C--GNF                  & 783    & 4.87\,s  & 103\,ms\\
+reverse string, C--GNF              & 183    & 649\,ms  & 44\,ms\\
+cycle navigation, C--GNF            & 266    & 363\,ms  & 64\,ms\\
+parity check, C--GNF                & 227    & 191\,ms  & 37\,ms\\
+robots, linear (Popper)             & 35     & 8.89\,s  & 5.4\,ms\\
+even and odd (Louise)               & 45     & 15.3\,ms & 2.4\,ms\\
+grandparent with invention (Popper) & 55     & 11.2\,ms & 4.2\,ms\\
+points-to, Andersen (Popper)        & 22     & 9.5\,ms  & 2.5\,ms\\
+list membership (Hopper)            & 2      & 3.4\,ms  & 5.2\,ms\\
+ancestor (Popper)                   & 3      & 1.4\,ms  & 0.5\,ms\\
+Inverse probe                       & 1      & 0.9\,ms  & 0.1\,ms\\
+\midrule
+cycle navigation                    & 1,581,602$^*$ & not in 200\,s & 8.6\,s$^*$\\
+even pairs                          & 1,125,904$^*$ & not in 200\,s & 3.7\,s$^*$\\
+robots, recursion (Popper)          & 3$^*$  & not in 200\,s & 98\,ms$^*$\\
+\bottomrule
+\end{tabular}
+\caption{Poker against the forest on task files from other benchmarks (single runs,
+the forest's time including Poker's post-processing). $^*$Distinct supports and the
+time to compute them, before post-processing.}
+\label{tab:survey}
+\end{table}
+
+The forest is slower than Poker only on list membership, where Poker's search is
+shallow and the forest's memo tables cost more than they save.
+
 \section{Scope}
 
 \begin{itemize}
@@ -225,9 +322,10 @@ $a^5b^5$ at $K = 9$ in 16\,ms and of $a^7b^7$ at $K = 13$ in 67\,ms.
   so that every step instantiates a metarule and the clause limit bounds the steps.
   This is the setting of the $a^nb^n$ experiment: there Poker finds no refutation of
   $a^3b^3$ at limit 4, although a grammar of three clauses derives it in five steps.
-  When hypothesis clauses can be reused, size is no longer additive; extending the
-  forest to that setting, as a fixpoint over the size-truncated families, is the
-  next step.
+  With reuse the forest computes a least fixpoint instead
+  (Section~\ref{sec:poker}), whose ground law is proved; that the invention state
+  threaded in depth-first order matches Vanilla's is checked against Poker, not
+  proved.
 \item The forest replaces the generalisation step only. Poker's other stages are
   unchanged, and they still receive every sub-hypothesis as a list; they could work
   on the forest itself, which represents the same family compactly.
@@ -262,6 +360,17 @@ tabled predicates.
   of data provenance. ICDT 2001.
 \bibitem{gkt} T.~J.~Green, G.~Karvounarakis and V.~Tannen. Provenance semirings.
   PODS 2007.
+\bibitem{vanilla} S.~Patsantzis. Vanilla: an inductive logic programming framework,
+  with the learners Louise and Poker. \url{https://github.com/stassa/vanilla}.
+\bibitem{louise} S.~Patsantzis and S.~H.~Muggleton. Top program construction and
+  reduction for polynomial time meta-interpretive learning. Machine Learning 110, 2021.
+\bibitem{deletang} G.~Del\'etang, A.~Ruoss, J.~Grau-Moya, T.~Genewein, L.~K.~Wenliang,
+  E.~Catt, C.~Cundy, M.~Hutter, S.~Legg, J.~Veness and P.~A.~Ortega. Neural networks
+  and the Chomsky hierarchy. ICLR 2023.
+\bibitem{popper} A.~Cropper and R.~Morel. Learning programs by learning from
+  failures. Machine Learning 110, 2021.
+\bibitem{hopper} S.~J.~Purga\l{}, D.~M.~Cerna and C.~Kaliszyk. Learning higher-order
+  logic programs from failures. IJCAI 2022.
 \end{thebibliography}
 
 \end{document}

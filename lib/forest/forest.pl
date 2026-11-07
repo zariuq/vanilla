@@ -141,8 +141,18 @@ product([lay(Lit, N, M, M2)|Rest], Out) :-
 % generalise(+Example, +K, -Hs): Hs is the sorted list of the supports of the
 % derivations of Example of size 1..K.
 generalise(Ex, K, Hs) :-
+    graded(Ex, K, NHs),
+    pairs_values(NHs, Hs0),
+    sort(Hs0, Hs).
+
+% graded(+Example, +K, -NHs): NHs is the sorted list of the pairs N-S, S the
+% support of a derivation of Example of size N, 1 =< N =< K. A support may
+% come with several sizes. The supports within any smaller limit K1 are those
+% of the pairs with N =< K1: the memo tables are indexed by exact size, so one
+% run at K answers every smaller limit.
+graded(Ex, K, NHs) :-
     call_pattern(Ex, G),
-    findall(F,
+    findall(N-F,
             ( upto(1, K, N),
               reach(G, N, 0, As),
               member(a(Inst, M2), As),
@@ -151,7 +161,7 @@ generalise(Ex, K, Hs) :-
               member(F, Fs)
             ),
             L),
-    sort(L, Hs).
+    sort(L, NHs).
 
 % ---------- Louise's top program construction, clause limit 1 ----------
 

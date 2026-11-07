@@ -1,5 +1,7 @@
 :- module(forest_poker, [forest_generalise/3,
                          forest_supports/4,
+                         forest_family/3,
+                         forest_readoff/4,
                          forest_applies/0,
                          use_forest/0,
                          use_vanilla/0]).
@@ -27,6 +29,11 @@ other settings.
 use_forest/0 makes poker:generalise/3 use the forest wherever it applies,
 falling back to Vanilla elsewhere, so that Poker's learn/1 runs on the
 forest unchanged; use_vanilla/0 undoes it.
+
+forest_family/3 keeps one run's supports with their grades, and
+forest_readoff/4 reads from them the answer of forest_generalise/3 at any
+smaller clause limit (from 2) and max_invented, as a search for those
+settings needs.
 */
 
 :- use_module(library(prolog_wrap)).
@@ -59,13 +66,57 @@ reuse_reach(Lit, K, M, S, M2) :-
 
 reuse_body([], _, _, M, [], M).
 reuse_body([L|Ls], K, Sub, M, S, M2) :-
-    call_pattern(L, G),
-    reuse_reach(G, K, M, S1, M1),
-    G = L,
-    fv_ok(Sub),
+    reuse_literal(L, K, Sub, M, S1, M1),
     reuse_body(Ls, K, Sub, M1, S2, M2),
     ord_union(S1, S2, S),
     length(S, N), N =< K.
+
+% A body literal whose predicate symbol is open (the Q and R of Chain) is
+% answered by the background knowledge, with the empty support, or has its
+% symbol chosen first among the target and invented predicates: the metarule
+% constraints are then checked once per choice rather than once per support,
+% and each symbol's goal is tabled apart. The answers are the same as those of
+% the open goal.
+reuse_literal(L, K, Sub, M, S1, M1) :-
+    arg(1, L, P),
+    var(P),
+    !,
+    (   fv_bk(L),
+        S1 = [],
+        M1 = M,
+        fv_ok(Sub)
+    ;   fv_sig(Sig),
+        member(P, Sig),
+        fv_ok(Sub),
+        reuse_goal(L, K, Sub, M, S1, M1)
+    ).
+reuse_literal(L, K, Sub, M, S1, M1) :-
+    reuse_goal(L, K, Sub, M, S1, M1).
+
+% The constraints are checked again on each answer only if the literal can
+% still bind the metasubstitution: an open symbol, or a variable shared with it.
+reuse_goal(L, K, Sub, M, S1, M1) :-
+    L =.. [_, P|Args],
+    (   nonvar(P),
+        \+ shares_variable(Args, Sub)
+    ->  Recheck = false
+    ;   Recheck = true
+    ),
+    call_pattern(L, G),
+    reuse_reach(G, K, M, S1, M1),
+    G = L,
+    (   Recheck == true
+    ->  fv_ok(Sub)
+    ;   true
+    ).
+
+shares_variable(A, B) :-
+    term_variables(A, AVs),
+    term_variables(B, BVs),
+    member(V, AVs),
+    member(W, BVs),
+    V == W,
+    !.
 
 % Vanilla resolves goals against hypothesis clauses it has built.
 reuse_mode :-
@@ -95,7 +146,14 @@ fv_bk(Lit) :-
     current_predicate(user:F/A),
     user:Lit.
 
-fv_ok(Sub) :- vanilla:constraints(Sub).
+% The constraints of a metasubstitution depend only on its instance, and the
+% forest meets each instance once per answer of the literal that bound it:
+% the check is tabled on the instance.
+fv_ok(Sub) :- ok_instance(Sub).
+
+:- table ok_instance/1.
+
+ok_instance(Sub) :- vanilla:constraints(Sub).
 
 % ---------- the problem ----------
 
@@ -143,14 +201,28 @@ forest_applies :-
 %   most K steps, or with hypothesis reuse at most K distinct
 %   metasubstitutions.
 forest_supports(Ep, K, MS, Hs) :-
+    forest_graded(Ep, K, MS, NHs),
+    within_limit(NHs, K, Hs).
+
+% forest_graded(+Ep, +K, +MS, -NHs): NHs is the sorted list of the pairs N-S
+% of the supports S of Ep's refutations within the clause limit K, N their
+% grade: the number of steps without hypothesis reuse, the number of
+% metasubstitutions in S with reuse.
+forest_graded(Ep, K, MS, NHs) :-
     set_problem(Ep, MS),
     (   reuse_mode
     ->  abolish_all_tables,
         call_pattern(Ep, G),
-        findall(S, ( reuse_reach(G, K, 0, S, _), G = Ep ), Ss),
-        sort(Ss, Hs0)
-    ;   generalise(Ep, K, Hs0)
-    ),
+        findall(N-S, ( reuse_reach(G, K, 0, S, _), G = Ep, length(S, N) ), L),
+        sort(L, NHs)
+    ;   graded(Ep, K, NHs)
+    ).
+
+% within_limit(+NHs, +K, -Hs): the supports of the grades up to K, as
+% Poker's prove_with_clause_limit/6 keeps them.
+within_limit(NHs, K, Hs) :-
+    findall(S, ( member(N-S, NHs), N =< K ), Ss),
+    sort(Ss, Hs0),
     (   poker_configuration:strict_clause_limit(true)
     ->  include([H]>>length(H, K), Hs0, Hs)
     ;   Hs = Hs0
@@ -176,9 +248,73 @@ forest_generalise(Pos, MS, Ss_Pos) :-
             ),
             Ss_Pos_),
     abolish_all_tables,
+    poker_output(Ss_Pos_, Pos, MS, Ss_Pos).
+
+% Poker's own post-processing of the sub-hypotheses: sorting, unfolding and
+% renaming of invented predicates.
+poker_output(Ss_Pos_, Pos, MS, Ss_Pos) :-
     once(poker_auxiliaries:skolem_sort(Ss_Pos_, Ss_Pos_s)),
     poker:unfold_generalised(Ss_Pos_s, Pos, MS, Ss_Pos_u),
     poker:rename_all_invented(Ss_Pos_u, Ss_Pos).
+
+% ---------- smaller limits read off one run ----------
+
+%!  forest_family(+Pos, +Metarules, -Family) is det.
+%
+%   Family is the list of the pairs Ep-NHs of each positive example Ep and
+%   the graded supports of its refutations (forest_graded/4) at the current
+%   clause limit and max_invented. forest_readoff/4 reads from it the answer
+%   of forest_generalise/3 at every smaller clause limit and max_invented.
+forest_family(Pos, MS, Family) :-
+    poker_configuration:clause_limit(K),
+    findall(Ep-NHs, ( member(Ep, Pos), forest_graded(Ep, K, MS, NHs) ), Family),
+    abolish_all_tables.
+
+%!  forest_readoff(+Family, +Pos, +Metarules, -Generalised) is det.
+%
+%   As forest_generalise(Pos, Metarules, Generalised) under the current
+%   clause limit K1 and max_invented M1, read off a Family that
+%   forest_family/3 computed at a clause limit K >= K1 and max_invented
+%   M >= M1: the supports of grade at most K1 that name no invented predicate
+%   outside the first M1. Without reuse the memo tables are indexed by exact
+%   size; with reuse the bounded fixpoint at K1 holds exactly the supports of
+%   at most K1 metasubstitutions of the fixpoint at K (bfam_iff in
+%   ProvenanceForest.lean). A refutation naming only the first M1 invented
+%   predicates is one under the smaller signature, and conversely, since
+%   Vanilla introduces invented predicates in order and resolves every
+%   literal of one against a clause it heads. K1 must be at least 2: at
+%   clause limit 1 Poker's top_program/7 also writes the labelled examples
+%   as background knowledge, so the problem itself changes.
+forest_readoff(Family, Pos, MS, Ss_Pos) :-
+    poker_configuration:clause_limit(K1),
+    must_be(between(2, inf), K1),
+    reset_gensym('_'),
+    findall(Subs,
+            ( member(Ep, Pos),
+              memberchk(Ep-NHs, Family),
+              poker:signature(Ep, Sig),
+              within_limit(NHs, K1, Hs),
+              member(H, Hs),
+              within_signature(H, Sig),
+              findall(Sub-M,
+                      ( member(Sub, H), poker:metasub_metarule(Sub, MS, M) ),
+                      Subs),
+              forall(member(Sub-_M, Subs), poker:constraints(Sub))
+            ),
+            Ss_Pos_),
+    % As Poker's generalise/3, leave no tables behind: the steps after it
+    % start from none.
+    abolish_all_tables,
+    poker_output(Ss_Pos_, Pos, MS, Ss_Pos).
+
+% within_signature(+Support, +Sig): every invented predicate Support names is
+% in Sig.
+within_signature(H, Sig) :-
+    \+ ( member(Sub, H),
+         sub_term(S, Sub),
+         atom(S),
+         poker:invented_symbol_(_, S),
+         \+ memberchk(S, Sig) ).
 
 % ---------- running Poker on the forest ----------
 

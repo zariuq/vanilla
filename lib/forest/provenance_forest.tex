@@ -2,6 +2,7 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
+\usepackage[section]{placeins}
 \usepackage[hidelinks]{hyperref}
 
 \newtheorem{theorem}{Theorem}
@@ -24,18 +25,26 @@ Poker generalises an example by collecting, for every refutation of the example
 within the clause limit, the set of metasubstitutions the refutation uses. Vanilla
 enumerates these refutations one at a time, and their number grows exponentially
 with the clause limit. The provenance forest computes the same sets by dynamic
-programming: it solves each first-order goal once for each exact size, and builds
-the sets of a refutation from those of its parts. It reads Vanilla's own problem
-and runs behind Poker's \texttt{generalise/3}. On Poker's experiments and on 80
-random grammar-learning problems its output is identical to Poker's in every case
-compared, for example the same 9,941 sub-hypotheses of $a^3b^3$ at clause limit 7 in
-0.69\,s where Poker takes 225\,s.
+programming: it solves each first-order goal once, for each exact size or, when
+hypothesis clauses are reused, as a bounded least fixpoint, and builds the sets of a
+refutation from those of its parts. It reads Vanilla's own problem and runs behind
+Poker's \nolinkurl{generalise/3}. On the ten languages of Poker's AAAI-26 experiments, at
+the settings the paper reports and on its own sampled examples, its output is
+identical to Poker's in all 260 comparisons, and Poker's whole learner learns the same
+hypotheses with it; it is faster on nine languages, by 1.3 to 145 times in total, and
+slower on balanced parentheses (0.86). One forest run also contains the answer at
+every smaller clause limit and number of invented predicates, which turns the search
+for those settings into a single run plus look-ups. The same identity holds on Poker's
+other experiments, on tasks converted from other benchmarks and on 80 random
+grammar-learning problems.
 \end{abstract}
 
 \section{The problem}
 
-Poker is the self-supervised grammar learner of the Vanilla framework for
-meta-interpretive learning~\cite{vanilla}, with Louise~\cite{louise}. Its
+Poker is the self-supervised learner of the Vanilla framework for
+meta-interpretive learning~\cite{vanilla,trewern}, with Louise~\cite{louise}; it
+learns from labelled and unlabelled examples and generates examples of its
+own~\cite{ssilp}. Its
 generalisation step takes an example $e$, background knowledge $B$, a set of
 metarules, a signature (the target predicate and the invented predicates) and a
 clause limit $K$. Each refutation of $e$ resolves goals either against $B$ or against
@@ -136,42 +145,46 @@ applies unchanged.
 are tests on a single metasubstitution. The forest calls Vanilla's own check on
 each metasubstitution when it is built and again as its body literals bind its
 symbols; the constraints compare symbols with \texttt{==}, so that a symbol not yet
-bound passes. A constraint on one metasubstitution removes edges from the forest and does
-not interact with the decomposition.
+bound passes. The check depends only on the metasubstitution's instance, and is
+tabled on it. A constraint on one metasubstitution removes edges from the forest and
+does not interact with the decomposition.
 
 \section{Behind Poker's API}\label{sec:poker}
 
 The forest reads a Vanilla MIL problem as Poker does: the encapsulated metarules,
 the background knowledge Vanilla writes to the \texttt{user} module, the
 configuration's metarule constraints, and Poker's signature of the target and its
-invented predicates. \texttt{forest\_generalise/3} answers as Poker's
-\texttt{generalise/3}: it computes each positive example's sub-hypotheses with the
+invented predicates. \nolinkurl{forest_generalise/3} answers as Poker's
+\nolinkurl{generalise/3}: it computes each positive example's sub-hypotheses with the
 forest and passes them through Poker's own constraint check, sorting, unfolding and
 renaming of invented predicates, so the two outputs can be compared as Prolog terms.
-\texttt{use\_forest/0} wraps \texttt{generalise/3}, so Poker's \texttt{learn/1} runs
+\nolinkurl{use_forest/0} wraps \nolinkurl{generalise/3}, so Poker's \nolinkurl{learn/1} runs
 on the forest unchanged; it falls back to Vanilla wherever the forest does not
 apply.
 
-The forest applies where Vanilla resolves goals against background knowledge and
-metarules only (\texttt{fetch\_clauses} without \texttt{hypothesis}), keeps every
-proof, and generalises examples one at a time without threads. Some of Poker's
-experiment settings are written that way: $a^nb^n$, parity, the \emph{even} setting of
-the weak Chomsky--Greibach script, the \emph{palindrome\_bin\_ng} setting of the binary
-script, and five settings of the Lindenmayer script. Most of the others, hello world
-and almost all of the Chomsky--Greibach grammars among them, use Vanilla's default,
-which also resolves goals against hypothesis clauses already built. There the
-clause limit bounds the distinct metasubstitutions of a refutation, not its steps,
-and size is no longer additive; the sub-hypotheses without reuse are a strict subset
-of Poker's (hello world: 16 of 18; the Chomsky--Greibach parentheses: 64 of 256).
+The forest applies wherever Poker keeps every proof and generalises examples one at
+a time without threads. Some settings let Vanilla resolve goals against background
+knowledge and metarules only (\texttt{fetch\_clauses} without \texttt{hypothesis}):
+$a^nb^n$ and parity in Vanilla's examples, and the Hilbert curve and Sierpinski
+triangle of the AAAI-26 experiments. There every step instantiates a metarule and
+the clause limit bounds the steps. Most others, hello world and the six context-free
+languages of the AAAI-26 experiments among them, use Vanilla's default, which also
+resolves goals against hypothesis clauses already built. There the clause limit
+bounds the distinct metasubstitutions of a refutation, not its steps, and size is no
+longer additive; the sub-hypotheses without reuse are a strict subset of Poker's
+(hello world: 16 of 18; the Chomsky--Greibach parentheses: 64 of 256).
 
 \paragraph{With reuse.} The forest then computes the least fixpoint of the same
 recurrence without sizes: a goal's supports are the sets $\{\sigma\} \cup S_1 \cup
 \cdots \cup S_m$ of at most $K$ metasubstitutions, over clauses
 $\sigma : g \leftarrow g_1, \ldots, g_m$ and supports $S_i$ of the $g_i$, and of
-background facts the empty set. SWI-Prolog's tabling computes it, cycles included,
-each literal tabled as its call pattern;
-it is finite because supports are bounded sets over finitely many
-metasubstitutions. The invention state is threaded in Vanilla's depth-first order
+background facts the empty set. SWI-Prolog's tabling~\cite{swipl} computes it,
+cycles included, each literal tabled as its call pattern; it is finite because
+supports are bounded sets over finitely many metasubstitutions. A body literal
+whose predicate symbol is still open (the $Q$ and $R$ of Chain) is answered by the
+background knowledge, or has its symbol chosen first among the target and invented
+predicates, so that the constraints are checked once per choice rather than once per
+support; the answers are those of the open goal. The invention state is threaded in Vanilla's depth-first order
 as before: a clause headed by the $i$-th invented predicate is introduced only once
 the $(i{-}1)$-th is available, and a clause met again passes, its head already
 available. A check on the set alone (that the inventions used are $inv_1$ to $inv_j$)
@@ -192,9 +205,9 @@ items correspond to Vanilla's refutations is checked against Poker, not proved.
 
 \section{Why-provenance}
 
-$\F_n(g)$ is the why-provenance of $g$ (Buneman, Khanna and Tan, 2001), restricted
+$\F_n(g)$ is the why-provenance of $g$~\cite{bkt}, restricted
 to derivations of size $n$, with metasubstitutions in the place of database tuples.
-In the semiring view of provenance (Green, Karvounarakis and Tannen, 2007) its
+In the semiring view of provenance~\cite{gkt} its
 values are sets of sets, added by union over alternative derivations and multiplied
 by pairwise union over the literals of a body. Grading by size keeps the family
 finite for recursive targets, and the theorem above is the statement that the graded
@@ -210,152 +223,563 @@ the number of refutations instead, and of the partial ones that fail, a number t
 grows exponentially with $K$ even when the number of distinct supports does not: at
 $a^4b^4$, limit 7, there are 18 supports.
 
-Table~\ref{tab:results} reports Poker's \texttt{generalise/3} and
-\texttt{forest\_generalise/3} on the same problems, in SWI-Prolog 10.1.9. Their
-outputs, Poker's sub-hypotheses after its own sorting and renaming, are identical as
-Prolog terms in every row; the forest's times include that post-processing. At
-limits too small to fit any refutation neither has an answer: Poker's
-\texttt{generalise/3} fails, and so does the forest's, through the same
-post-processing ($a^3b^3$ at $K = 4$: 97.7\,ms against 1.1\,ms).
+With reuse there are no sizes: a goal's family holds every support within the clause
+limit, whether or not the rest of a refutation can still fit beside it. Vanilla's
+search carries the metasubstitutions found so far and stops as soon as they exceed
+the limit, so where few metasubstitutions are allowed and the strings are long, the
+budget prunes its search more than sharing saves the forest
+(Section~\ref{sec:results}).
+
+\section{Methodology}\label{sec:method}
+
+\paragraph{What is compared.} Three things are compared, each on identical inputs.
+\begin{enumerate}
+\item \emph{The generalisation step.} Poker's \nolinkurl{generalise/3} and
+  \nolinkurl{forest_generalise/3} receive the same encapsulated positive examples and
+  metarules, with the background knowledge written to the \texttt{user} module as
+  Poker's \nolinkurl{top_program/7} writes it. Their outputs, the sub-hypotheses after
+  Poker's own constraint check, sorting, unfolding and renaming of invented
+  predicates, are compared as Prolog terms up to variable renaming
+  (\texttt{=@=}). When no example has a refutation within the clause limit both
+  fail, through the same post-processing; that outcome counts as agreement. An
+  exception in either (a resource limit, a time limit) is recorded as such and is
+  never counted as agreement.
+\item \emph{The whole learner.} Poker's \nolinkurl{learn/7} (generalise, generate
+  examples, label, specialise) runs once with Vanilla's generalisation and once
+  with the forest's, through \nolinkurl{use_forest/0}. The learned hypotheses and the
+  labellings (the examples labelled positive and negative) are compared as terms,
+  and each hypothesis is evaluated by the experiment's own test harness.
+\item \emph{Smaller limits read off one run} (Section~\ref{sec:readoff}). The
+  read-off at each smaller clause limit and \texttt{max\_invented} is compared, as
+  terms, with the forest run directly there and with Poker run directly there.
+\end{enumerate}
+
+\paragraph{Benchmarks.}
+\begin{itemize}
+\item The experiments of Poker's AAAI-26 paper~\cite{ssilp}: six context-free
+  languages over $\{0,1\}$ (even parity, $a^nb^n$, equal numbers of $a$ and $b$ in any
+  order, $a^nb^m$ with $n \ge m \ge 0$, palindromes, balanced parentheses) under weak
+  Chomsky--Greibach normal-form metarules, and four L-systems (the Dragon, Hilbert
+  and Koch curves and the Sierpinski triangle, from Prusinkiewicz and
+  Lindenmayer~\cite{abop}) under Lindenmayer normal-form metarules. An L-system
+  example relates a string to the one its productions rewrite it to. The paper's
+  code appendix~\cite{ssilpcode} is run as published; nothing of it is copied into
+  Vanilla's tree.
+\item Poker's own experiments in Vanilla~\cite{vanilla}: $a^nb^n$, parity, hello
+  world, and the Chomsky--Greibach settings of its experiment script.
+\item Task files written for Poker's setting from other benchmarks: Del\'etang et
+  al.~\cite{deletang}, Popper's suite~\cite{popper}, Hopper's~\cite{hopper}, Louise's
+  even and odd~\cite{vanilla,louise} and an Inverse probe. Each file's header states
+  its source, the version taken and the conversion; they are in
+  \nolinkurl{data/forest_examples/benchmarks/survey}.
+\item 80 random grammar-learning problems (Section~\ref{sec:results}).
+\end{itemize}
+
+\paragraph{Settings.} For the AAAI-26 experiments every setting is read from the
+code appendix itself rather than transcribed: each language's options from its
+\nolinkurl{set_configs/2} clause (clause limit, \texttt{max\_invented}, the unfolding
+of invented predicates, hypothesis reuse and tabling), and its labelled examples,
+numbers of generated examples and testing examples from the arguments its range
+experiment passes to \nolinkurl{setup_range_experiments/12}, captured before any
+experiment runs (Table~\ref{tab:aaai-settings}). These are the settings the paper
+recommends and reports, and they lead the results. Larger clause limits elsewhere
+in this note (Table~\ref{tab:scaling}) are scaling tests of the generalisation step,
+not recommended settings: with hypothesis reuse Poker learns $a^nb^n$ at clause limit
+3 with one invented predicate, while without reuse a refutation of $a^nb^n$ takes
+$2n - 1$ steps, so the limit must grow with the example. In Poker's design a limit
+beyond what the target needs makes the refutation search exhaust its resources, and
+the right limits are found by raising the clause limit and \texttt{max\_invented}
+from $(1, 0)$ until a correct hypothesis appears; Section~\ref{sec:readoff} measures
+that procedure.
+
+\paragraph{Examples and seeds.} Labelled examples are generated by the appendix's
+own \nolinkurl{generate_initial/3} from each iteration of the range experiment, which
+samples them at random from the strings of the language within a length range.
+Before each problem the random generator is seeded with a fixed seed $s$: seeds 1
+to 5 for the generalisation step, 1 to 3 for the whole learner. The number $l$ of
+labelled examples reported is the number generated: where an iteration asks for
+more than the strings of its length range, the generator returns fewer. Poker's
+generalisation draws one random number per refutation (a Bernoulli trial of
+probability 1, which keeps every refutation); the forest draws none. So that the
+steps after generalisation (the order of the generated examples) see the same random
+numbers, the generator is reseeded with $s + 1000003$ after \nolinkurl{generalise/3}
+with either learner, and with $s + 2000003$ before the testing examples are
+sampled.
+
+\paragraph{Time.} Times are the CPU time of the SWI-Prolog process,
+\texttt{statistics(cputime)}, around one call, after a garbage collection; wall-clock
+times and inference counts were recorded too. The generalisation step's time
+includes Poker's post-processing for both learners; Vanilla's tables are refreshed
+before Poker's call, outside the timing, as \nolinkurl{top_program/7} does. Each
+comparison runs Poker then the forest in one process, one problem after another.
+Every generalisation is limited to 600\,s and every \nolinkurl{learn/7} to 1200\,s.
+Times are single runs per seed; the tables give medians over seeds and totals over
+all comparisons, and a ratio is Poker's time over the forest's. The benchmark ran
+one process at a time, except the generalisation step of the Hilbert curve and the
+Sierpinski triangle, measured while two other benchmark processes ran. The machine
+was shared with other work, so times are indicative and the ratios, measured side
+by side, more reliable than the absolute values.
+
+\paragraph{Software.} SWI-Prolog 10.1.9 on x86-64 Linux. The appendix runs in a
+working copy that differs from it only in the two lines its README tells the user to
+edit: Poker as the learner, and the experiment script. Its Vanilla and Poker sources
+are byte-identical to this fork's, apart from the selected experiment file and one
+auxiliary predicate the appendix adds; the forest is loaded from this fork. The
+scripts are in \nolinkurl{data/forest_examples/benchmarks/aaai26}:
+\texttt{setup\_aaai26.sh} makes the working copies, \texttt{aaai26\_bench.pl} runs
+the comparisons, \texttt{run\_aaai26.sh} runs the protocols reported here and
+\texttt{summarise.pl} tabulates them.
+
+\section{Results}\label{sec:results}
+
+\subsection{The AAAI-26 experiments at their own settings}
+
+Table~\ref{tab:aaai-settings} lists the settings and Table~\ref{tab:aaai-gen} the
+generalisation step. In all 260 comparisons the two outputs agree: 248 are identical
+lists of sub-hypotheses, and in the other 12 neither learner finds a refutation. The
+forest is faster on nine of the ten languages, most on those whose refutations are
+long or branch widely (palindromes, by 145 times in total; the Koch curve and even
+parity, 29 times; the Hilbert curve, whose refutations without reuse take up to 8
+steps, 18 times). It gains least on $a^nb^n$ (1.29) and is slower on balanced
+parentheses (0.86). Both reuse hypothesis clauses at small clause limits, $a^nb^n$ on
+strings of up to 44 symbols and the parentheses with two invented predicates.
+Vanilla's search, which carries the
+metasubstitutions found so far, is cut early by the clause limit, while the forest
+computes every support of every intermediate goal within the limit, whether or not
+the rest of the refutation can still fit.
 
 \begin{table}[ht]
 \centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llrrcllll}
+\toprule
+Language & Metarules & $K$ & $M$ & Reuse & Unfold & Labelled $l$ & Generated $k$ & Testing (pos.\ / neg.)\\
+\midrule
+even parity      & I, C    & 5 & 1 & yes & none    & 1--21, len.\ 0--5   & 0--5       & all, 6--10 / all, 0--5\\
+$a^nb^n$         & I, C    & 3 & 1 & yes & all     & 1--21, len.\ 0--45  & 0--5       & all, 46--80 / all, 0--12\\
+equal $a$, $b$   & I, C    & 4 & 2 & yes & all     & 1--21, len.\ 0--6   & 0--250     & all, 7--10 / all, 0--8\\
+$a^nb^m$         & I, C    & 4 & 1 & yes & learned & 1--41, len.\ 0--9   & 0--5       & all, 10--18 / all, 0--13\\
+palindrome       & I, C, T & 5 & 0 & yes & learned & 1--21, len.\ 0--5   & 0--250     & all, 6--16 / all, 0--10\\
+parentheses      & I, C    & 4 & 2 & yes & all     & 1--21, len.\ 0--10  & 0--10      & 1500, 11--21 / 1500, 0--15\\
+\midrule
+Dragon curve     & LNF     & 5 & 2 & yes & all     & 1--41, len.\ 0--4   & 0--1500    & all, 5--10 / all, 0--4\\
+Hilbert curve    & LNF     & 8 & 6 & no  & all     & 1--21 + 1--21       & 0--1500    & 1500, 0--12 / 1500, 0--4\\
+Koch curve       & LNF     & 6 & 4 & yes & all     & 0--20 + 1--5        & 0--1500    & 1500, 10--14 / 1500, 0--5\\
+Sierpinski triangle & LNF  & 6 & 5 & no  & all     & 1--31 + 1--126      & 0--1500    & 1000, 0--14 / 1000, 0--5\\
+\bottomrule
+\end{tabular}
+\caption{The settings of the AAAI-26 experiments, as read from the code appendix.
+$K$: clause limit; $M$: \texttt{max\_invented}; reuse: Vanilla resolves goals
+against hypothesis clauses too (and is tabled); unfold: Poker's unfolding of
+invented predicates. Metarules: Identity, Chain, Tri-Chain under weak
+Chomsky--Greibach constraints, or Lindenmayer normal form. Labelled: the numbers
+requested over the range's iterations and the string lengths sampled from (for the
+L-systems, a second set of strings long enough to contain the system's variables:
+Hilbert 11--13, Koch 8--9, Sierpinski 9--10). Testing: how many strings
+(\emph{all}, or a sample) and their lengths.}
+\label{tab:aaai-settings}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Language & Agree & Sub-hyps. & \multicolumn{2}{c}{Last iteration} & \multicolumn{2}{c}{All comparisons} & \multicolumn{2}{c}{Poker / forest}\\
+\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}
+ & & & Poker & Forest & Poker & Forest & total & range\\
+\midrule
+even parity      & 25/25 & 32--631  & 5.83\,s  & 233\,ms  & 81.9\,s  & 2.79\,s & 29.4 & 22--60\\
+$a^nb^n$         & 25/25 & 4--9     & 1.69\,s  & 1.32\,s  & 22.1\,s  & 17.2\,s & 1.29 & 1.07--5.9\\
+equal $a$, $b$   & 25/25 & 29--271  & 2.55\,s  & 1.13\,s  & 35.6\,s  & 15.8\,s & 2.26 & 1.95--2.66\\
+$a^nb^m$         & 25/25 & 24--105  & 1.43\,s  & 174\,ms  & 24.6\,s  & 2.81\,s & 8.75 & 7.5--23\\
+palindrome       & 30/30 & 3--124   & 11.8\,s  & 86\,ms   & 196.5\,s & 1.36\,s & 145  & 65--391\\
+parentheses      & 25/25 & 16--107  & 3.71\,s  & 4.68\,s  & 51.6\,s  & 59.9\,s & 0.86 & 0.75--1.98\\
+\midrule
+Dragon curve     & 25/25 & 2--46    & 3.28\,s  & 175\,ms  & 43.0\,s  & 2.01\,s & 21.4 & 15--55\\
+Hilbert curve    & 25/25 & 4--136   & 63.0\,s  & 3.46\,s  & 919.5\,s & 49.9\,s & 18.4 & 8.6--22\\
+Koch curve       & 25/25 & 1--17    & 6.35\,s  & 274\,ms  & 83.6\,s  & 2.84\,s & 29.5 & 15--44\\
+Sierpinski triangle & 30/30$^*$ & 1--30 & 43.0\,s & 5.31\,s & 683.8\,s & 88.7\,s & 7.71 & 7.0--8.9\\
+\bottomrule
+\end{tabular}
+\caption{The generalisation step on the AAAI-26 experiments at their own settings
+(Table~\ref{tab:aaai-settings}): every iteration of each range experiment, seeds 1 to
+5. Agree: comparisons whose outputs are identical as terms. Sub-hyps.: the number
+of sub-hypotheses Poker's \nolinkurl{generalise/3} returns. Times are CPU times,
+medians over the seeds at the last iteration and totals over all comparisons; the
+last iteration has the most labelled examples ($l$ = 21, 21, 21, 17, 21, 21, 41, 42,
+25 and 157). Range: the least and greatest ratio over the comparisons.
+$^*$In 12 of the 30, mostly at the first iterations, no example has a refutation
+within the clause limit and both learners return none.}
+\label{tab:aaai-gen}
+\end{table}
+
+\paragraph{The whole learner.} Poker's \nolinkurl{learn/7} ran with Vanilla's
+generalisation and with the forest's on the first and the last iteration of each
+range, with the least and the greatest number of generated examples of the range,
+seeds 1 to 3: 12 pairs of runs per language (Table~\ref{tab:aaai-learn}).
+In all 120 pairs the learned hypotheses and the labellings are identical. At the
+last iteration with the most generated examples Poker learns a correct hypothesis
+(one that accepts every positive and rejects every negative testing example) in the
+runs counted in the table, the same with either generalisation. The steps after
+generalisation are Vanilla's in both runs and cost the same; where they dominate,
+as on the L-systems with 1,500 generated examples, the forest saves only the
+generalisation's share.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Language & Same & \multicolumn{2}{c}{\nolinkurl{learn/7}} & \multicolumn{2}{c}{of which generalisation} & Correct\\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+ & & Vanilla & Forest & Vanilla & Forest & \\
+\midrule
+even parity      & 12/12 & 7.16\,s  & 389\,ms  & 6.56\,s  & 104\,ms  & 3/3\\
+$a^nb^n$         & 12/12 & 2.02\,s  & 1.48\,s  & 1.89\,s  & 1.41\,s  & 0/3\\
+equal $a$, $b$   & 12/12 & 13.1\,s  & 11.6\,s  & 2.88\,s  & 1.37\,s  & 2/3\\
+$a^nb^m$         & 12/12 & 1.81\,s  & 388\,ms  & 1.66\,s  & 299\,ms  & 0/3\\
+palindrome       & 12/12 & 12.2\,s  & 1.75\,s  & 9.88\,s  & 78\,ms   & 3/3\\
+parentheses      & 12/12 & 4.30\,s  & 5.42\,s  & 4.25\,s  & 5.35\,s  & 1/3\\
+\midrule
+Dragon curve     & 12/12 & 25.9\,s  & 21.2\,s  & 3.94\,s  & 511\,ms  & 3/3\\
+Hilbert curve    & 12/12 & 154\,s   & 87.8\,s  & 62.7\,s  & 3.56\,s  & 3/3\\
+Koch curve       & 12/12 & 13.0\,s  & 6.85\,s  & 6.35\,s  & 126\,ms  & 3/3\\
+Sierpinski triangle & 12/12 & 51.0\,s & 17.6\,s & 39.9\,s & 5.05\,s & 1/3\\
+\bottomrule
+\end{tabular}
+\caption{Poker's \nolinkurl{learn/7} with Vanilla's generalisation and with the
+forest's. Same: pairs of runs (iterations 1 and last, the least and greatest number
+of generated examples, seeds 1 to 3) whose hypotheses and labellings are identical.
+The times are medians over the seeds at the last iteration with the greatest number
+of generated examples (5, 5, 250, 5, 250, 10, 1500, 1500, 1500, 1500); Correct:
+runs of those three whose hypothesis is correct on the experiment's testing
+examples, with either generalisation.}
+\label{tab:aaai-learn}
+\end{table}
+
+
+\subsection{Choosing the limits}\label{sec:readoff}
+
+The paper's settings are found by raising the clause limit $K$ and
+\texttt{max\_invented} $M$ from $(1, 0)$ until Poker learns a correct hypothesis.
+Every candidate setting needs its own refutation search with Vanilla. One run of the
+forest at $(K, M)$ contains the generalisation at every smaller $(K', M')$ with
+$K' \ge 2$, and \nolinkurl{forest_family/3} with \nolinkurl{forest_readoff/4} reads it
+off:
+\begin{itemize}
+\item \emph{Without reuse} the memo tables are indexed by exact size: the supports at
+  $K'$ are those of the grades up to $K'$.
+\item \emph{With reuse}, by the bounded-fixpoint theorem, the fixpoint at $K'$ and the
+  supports of at most $K'$ metasubstitutions in the fixpoint at $K$ are both the
+  supports of the derivation trees with at most $K'$ labels.
+\item \emph{Invented predicates.} A refutation that names only the first $M'$ invented
+  predicates is a refutation under the smaller signature, and conversely: Vanilla
+  introduces invented predicates in order, and resolves every literal of an invented
+  predicate against a clause that predicate heads. The supports at $M'$ are those
+  that name no later invented predicate. The invention state is capped by the
+  signature's size, but a refutation over the first $M'$ invented predicates passes
+  through the same states under both signatures.
+\item \emph{At $K' = 1$ the problem changes}: there Poker's \nolinkurl{top_program/7}
+  also writes the labelled examples as background knowledge, so that a single clause
+  can resolve a recursive literal against another example. The read-off does not
+  apply, and the forest runs directly.
+\end{itemize}
+The read-off also leaves SWI-Prolog's tables as \nolinkurl{generalise/3} leaves them, all
+abolished: Poker's later steps start from no tables, and a first version of the
+read-off that skipped this learned a different hypothesis at the next candidate.
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{lrrrrrrr}
+\toprule
+Language & Ceiling & Cells & Agree & One run + read-offs & Forest at each & Poker at each & $K' = 1$\\
+\midrule
+even parity    & (5, 1) & 32  & 32  & 0.12\,s & 0.14\,s & 6.27\,s  & differs\\
+$a^nb^n$       & (3, 1) & 16  & 16  & 0.79\,s & 0.90\,s & 1.52\,s  & differs\\
+equal $a$, $b$ & (4, 2) & 36  & 36  & 1.60\,s & 1.73\,s & 4.48\,s  & differs\\
+$a^nb^m$       & (4, 1) & 24  & 24  & 0.24\,s & 0.31\,s & 3.38\,s  & differs\\
+palindrome     & (5, 0) & 16  & 16  & 0.03\,s & 0.06\,s & 12.3\,s  & differs\\
+parentheses    & (4, 2) & 36  & 36  & 4.45\,s & 5.25\,s & 7.25\,s  & differs\\
+Dragon curve   & (5, 2) & 48  & 48  & 0.11\,s & 0.29\,s & 7.20\,s  & differs\\
+Hilbert curve  & (8, 6) & 196 & 196 & 2.92\,s & 16.8\,s & 223\,s   & same\\
+Koch curve     & (6, 4) & 100 & 100 & 0.14\,s & 0.79\,s & 20.3\,s  & differs\\
+Sierpinski triangle & (6, 5) & 120 & 120 & 14.1\,s & 68.8\,s & 545\,s & 3 of 4\\
+\bottomrule
+\end{tabular}
+\caption{One forest run at each language's own limits (the ceiling), read off at
+every clause limit $K'$ from 2 to the ceiling's and every \texttt{max\_invented}
+$M'$ from 0 to its, on iterations 1 and 2 of the range with seeds 1 and 2 (for the
+Sierpinski triangle iterations 3 and 6, the first ones whose examples have
+refutations). Agree:
+cells where the read-off, the forest run directly at $(K', M')$ and Poker run
+directly there all give the same output. The times are totals over the cells: the
+four runs at the ceiling with all the read-offs, the forest run at every cell, and
+Poker at every cell. $K' = 1$: whether the ceiling run's supports of one step equal
+the forest's own at clause limit 1, where the labelled examples are background
+knowledge too (in the four problems of each language).}
+\label{tab:readoff}
+\end{table}
+
+\paragraph{The deepening.} On each language's calibration experiment (the single
+experiments the code appendix provides for calibrating the learners' settings,
+with the number of generated examples its \nolinkurl{set_configs/2} sets) the
+deepening tries $(K, M)$ for $K = 1, 2, \ldots$ and, for each, $M$ from 0 to
+$K - 1$ (a hypothesis of $K$ clauses defines at most $K - 1$ invented predicates),
+and stops at the first whose learned hypothesis is correct on the experiment's
+testing examples, or at a time limit of 300\,s per \nolinkurl{learn/7}. It runs three
+ways: with Poker; with the forest run at each candidate; and with the read-off,
+which runs the forest once at $(K, K-1)$ when the deepening first reaches clause
+limit $K$ and reads off the candidates up to it. Table~\ref{tab:tune} gives the
+results for seed 1.
+The deepening stops at the paper's own settings for five languages (even parity,
+$a^nb^n$, $a^nb^m$, the parentheses and the Koch curve), and earlier for two: the
+palindromes at $(2, 0)$ and the Dragon curve at $(3, 1)$, where the learned grammars
+are the correct ones (the clause limit bounds each sub-hypothesis, and the learned
+program is the union of those that survive specialisation). For equal numbers of
+$a$ and $b$ no candidate up to $(5, 4)$ gives a correct hypothesis on the calibration
+experiment; there Poker stops at $(5, 3)$ on a table-space limit, the forest run at
+each candidate on the time limit (its labelling alone takes about 285\,s), and the
+read-off completes all 15 candidates. At every candidate that two deepenings both
+reach, they learn the same hypothesis. In these runs the steps after generalisation
+take a large share of the time, so the forest saves the generalisation's share:
+from 1.2 to 22 times on it. The read-off costs about as much as the forest run at
+each candidate here, because at each clause limit it runs the forest with the
+largest number of invented predicates, which costs most with reuse; it pays off when
+one run serves many candidates, as on the Hilbert curve in Table~\ref{tab:readoff}.
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{lccrrrrrrr}
+\toprule
+Language & Paper & Found & Tried & \multicolumn{2}{c}{Poker} & \multicolumn{2}{c}{Forest at each} & \multicolumn{2}{c}{Read-off}\\
+\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(lr){9-10}
+ & & & & total & gen. & total & gen. & total & gen.\\
+\midrule
+even parity    & (5, 1) & (5, 1) & 12 & 5.59\,s & 5.06\,s & 628\,ms & 227\,ms & 631\,ms & 229\,ms\\
+$a^nb^n$       & (3, 1) & (3, 1) & 5  & 124\,ms & 68\,ms  & 82\,ms  & 28\,ms  & 88\,ms  & 33\,ms\\
+equal $a$, $b$ & (4, 2) & none   & 14--15 & 429\,s$^a$ & 39.9\,s & 708\,s$^b$ & 21.5\,s & 983\,s & 26.7\,s\\
+$a^nb^m$       & (4, 1) & (4, 1) & 8  & 465\,ms & 377\,ms & 122\,ms & 48\,ms  & 145\,ms & 62\,ms\\
+palindrome     & (5, 0) & (2, 0) & 2  & 1.19\,s & 86\,ms  & 1.17\,s & 59\,ms  & 1.20\,s & 72\,ms\\
+parentheses    & (4, 2) & (4, 2) & 9  & 3.02\,s & 2.71\,s & 2.08\,s & 1.77\,s & 2.25\,s & 1.91\,s\\
+Dragon curve   & (5, 2) & (3, 1) & 5  & 2.05\,s & 1.44\,s & 1.84\,s & 1.22\,s & 1.85\,s & 1.23\,s\\
+Koch curve     & (6, 4) & (6, 4) & 20 & 28.6\,s & 20.2\,s & 16.6\,s & 8.30\,s & 16.8\,s & 8.13\,s\\
+\bottomrule
+\end{tabular}
+\caption{The deepening on the calibration experiments, seed 1, up to one clause more
+than the paper's. Paper: the paper's clause limit and \texttt{max\_invented};
+Found: the first candidate whose hypothesis is correct; Tried: the candidates run.
+Times are CPU totals over the candidates, of \nolinkurl{learn/7} and of its
+generalisation step. $^a$Stopped at $(5, 3)$ by a table-space limit. $^b$Stopped at
+$(5, 3)$ by the 300\,s limit. The Hilbert curve and the Sierpinski triangle were not
+run: their calibration experiments have many long examples without reuse (123 for
+the Hilbert curve), and each of Poker's candidates near the paper's limits takes
+minutes, more than this benchmark's budget of one process at a time allowed.}
+\label{tab:tune}
+\end{table}
+
+
+\subsection{Poker's own experiments: scaling and reuse}
+
+Table~\ref{tab:scaling} is a scaling test of the generalisation step, not a
+recommended setting. Poker's $a^nb^n$ experiment in Vanilla does not reuse
+hypothesis clauses, so a refutation of $a^nb^n$ takes $2n - 1$ steps and the clause
+limit must grow with the example. Poker's cost grows with the number of
+refutations, exponentially in the clause limit, while the number of distinct
+supports need not grow (18 at $a^4b^4$, limit 7). With reuse, as in the AAAI-26
+setting, the same language is learned at clause limit 3
+(Tables~\ref{tab:aaai-gen} and~\ref{tab:tune}). At limits too small to fit any
+refutation neither learner has an answer: Poker's \nolinkurl{generalise/3} fails, and
+so does the forest's, through the same post-processing.
+
+\begin{table}[ht]
+\centering
+\small
 \begin{tabular}{lrrrrr}
 \toprule
 Problem & Sub-hypotheses & \multicolumn{2}{c}{Poker} & \multicolumn{2}{c}{Forest}\\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
         &               & time & inferences & time & inferences\\
 \midrule
-$a^1b^1$, $K=1$ & 1     & 1.0\,ms  & 6,164          & 0.1\,ms  & 1,527\\
-$a^2b^2$, $K=3$ & 4     & 9.5\,ms  & 199,910        & 0.9\,ms  & 13,945\\
-$a^2b^2$, $K=5$ & 1,449 & 1.72\,s  & 35,884,088     & 82\,ms   & 1,931,700\\
-$a^3b^3$, $K=5$ & 10    & 1.21\,s  & 29,254,138     & 3.3\,ms  & 58,700\\
-$a^3b^3$, $K=7$ & 9,941 & 226\,s   & 5,348,394,311  & 694\,ms  & 17,197,057\\
-$a^4b^4$, $K=7$ & 18    & 210\,s   & 5,134,352,920  & 9.9\,ms  & 164,296\\
-parity, $K=5$   & 362   & 570\,ms  & 4,971,836      & 68\,ms   & 949,044\\
+$a^1b^1$, $K=1$ & 1     & 1.3\,ms  & 6,164          & 0.2\,ms  & 1,815\\
+$a^2b^2$, $K=3$ & 4     & 9.5\,ms  & 199,910        & 0.9\,ms  & 12,584\\
+$a^2b^2$, $K=5$ & 1,449 & 1.69\,s  & 35,884,088     & 73\,ms   & 1,911,052\\
+$a^3b^3$, $K=5$ & 10    & 1.19\,s  & 29,254,138     & 2.7\,ms  & 41,624\\
+$a^3b^3$, $K=7$ & 9,941 & 216\,s   & 5,348,394,311  & 709\,ms  & 17,141,301\\
+$a^4b^4$, $K=7$ & 18    & 200\,s   & 5,134,352,920  & 7.2\,ms  & 105,103\\
+parity, $K=5$   & 362   & 458\,ms  & 4,971,369      & 38\,ms   & 674,886\\
 \bottomrule
 \end{tabular}
-\caption{Poker against the forest on Poker's $a^nb^n$ experiment at several sizes and
-on its parity experiment (16 examples), single runs; the inference counts are
-exact.}
-\label{tab:results}
+\caption{A scaling test of the generalisation step: Poker's $a^nb^n$ experiment in
+Vanilla at several sizes, without reuse, and its parity experiment (16 examples).
+Outputs identical in every row. Single runs of \nolinkurl{compare_with_poker.pl},
+wall-clock times; the inference counts are exact.}
+\label{tab:scaling}
 \end{table}
 
-With hypothesis reuse, Vanilla's default, the two outputs are identical on
-Poker's hello world and on four Chomsky--Greibach settings, with Poker's own
-unfolding of invented predicates applied to both:
+On 80 random grammar-learning problems (terminals, metarules among Identity, Chain
+and Tri-chain, constraints, one example string of length 0 to 5, clause limits 1 to
+4, 0 to 2 invented predicates, no reuse) the two outputs are identical in all 80.
+Table~\ref{tab:reuse} gives the settings of Poker's Chomsky--Greibach script and its
+hello world, which reuse hypothesis clauses.
 
 \begin{table}[ht]
 \centering
+\small
 \begin{tabular}{lrrr}
 \toprule
 Problem (reuse) & Sub-hypotheses & Poker & Forest\\
 \midrule
-hello world, $K=2$                 & 18  & 4.4\,ms  & 0.8\,ms\\
-C--GNF $a^nb^n$, $K=3$             & 18  & 56\,ms   & 35\,ms\\
-C--GNF $a^nb^m$, $K=4$             & 70  & 102\,ms  & 11\,ms\\
-C--GNF even parity, $K=5$          & 508 & 3.2\,s   & 0.14\,s\\
-C--GNF parentheses, $K=4$          & 203 & 1.60\,s  & 1.51\,s\\
+hello world, $K=2$                 & 18  & 4.9\,ms  & 0.9\,ms\\
+C--GNF $a^nb^n$, $K=3$             & 18  & 56\,ms   & 26\,ms\\
+C--GNF $a^nb^m$, $K=4$             & 70  & 109\,ms  & 6.9\,ms\\
+C--GNF even parity, $K=5$          & 508 & 3.62\,s  & 111\,ms\\
+C--GNF parentheses, $K=4$          & 203 & 1.73\,s  & 860\,ms\\
 \bottomrule
 \end{tabular}
-\caption{Poker against the forest with hypothesis reuse (single runs).}
+\caption{Poker against the forest with hypothesis reuse, on Poker's hello world and
+the settings of its Chomsky--Greibach script, with Poker's own unfolding of
+invented predicates applied to both. Outputs identical; single runs, wall-clock.}
 \label{tab:reuse}
 \end{table}
 
-On 80 random grammar-learning problems (terminals, metarules among Identity, Chain
-and Tri-chain, constraints, one example string of length 0 to 5, clause limits 1 to 4,
-0 to 2 invented predicates) the two outputs are identical in all 80: 50 have
-sub-hypotheses, the largest 19,073; Poker takes 105\,s in all and the forest
-1.7\,s. Poker's \texttt{learn/1} on parity learns the same five-clause grammar of
-even parity, with an invented predicate, on the forest as on Vanilla, in 173\,ms
-against 629\,ms. Without Poker's post-processing the forest computes the supports of
-$a^5b^5$ at $K = 9$ in 16\,ms and of $a^7b^7$ at $K = 13$ in 67\,ms.
+\subsection{Other benchmarks}
 
-Table~\ref{tab:survey} goes beyond Poker's own experiments, to task files written for
-Poker's setting from other benchmarks: the regular and context-free tasks of
-Del\'etang et~al.'s \emph{Neural Networks and the Chomsky Hierarchy}~\cite{deletang},
-with and without Chomsky--Greibach normal-form metarules; the kinship, robot and
-points-to tasks of Popper's suite~\cite{popper}; list membership from Hopper's
-suite~\cite{hopper}; Louise's even and odd~\cite{vanilla}; and a probe of the
-Inverse metarule. Each runs with its own clause limit and without reuse. The outputs
-are identical on the 13 tasks Poker finishes within 200\,s. On the other three the
-forest alone was run.
+Table~\ref{tab:survey} goes beyond Poker's experiments, to the task files of
+Section~\ref{sec:method}, each with its own clause limit and without reuse.
+The outputs are identical on the 13 tasks Poker finishes within 200\,s. Two of them
+(reverse string and parity check without normal-form constraints) need a large
+stack: with SWI-Prolog's default, Poker's search raises a resource error, which
+the comparison now reports as an exception rather than as a failure of both. On the
+other three Poker does not finish; the forest's supports alone, from an earlier
+run, are given. The forest is slower than Poker only on list membership, where
+Poker's search is shallow and the forest's memo tables cost more than they save.
 
 \begin{table}[ht]
 \centering
+\small
 \begin{tabular}{lrrr}
 \toprule
 Task & Sub-hypotheses & Poker & Forest\\
 \midrule
-reverse string                      & 18,959 & 92.1\,s  & 1.50\,s\\
-parity check                        & 21,740 & 32.6\,s  & 1.57\,s\\
-even pairs, C--GNF                  & 783    & 4.87\,s  & 103\,ms\\
-reverse string, C--GNF              & 183    & 649\,ms  & 44\,ms\\
-cycle navigation, C--GNF            & 266    & 363\,ms  & 64\,ms\\
-parity check, C--GNF                & 227    & 191\,ms  & 37\,ms\\
-robots, linear (Popper)             & 35     & 8.89\,s  & 5.4\,ms\\
-even and odd (Louise)               & 45     & 15.3\,ms & 2.4\,ms\\
-grandparent with invention (Popper) & 55     & 11.2\,ms & 4.2\,ms\\
-points-to, Andersen (Popper)        & 22     & 9.5\,ms  & 2.5\,ms\\
-list membership (Hopper)            & 2      & 3.4\,ms  & 5.2\,ms\\
-ancestor (Popper)                   & 3      & 1.4\,ms  & 0.5\,ms\\
-Inverse probe                       & 1      & 0.9\,ms  & 0.1\,ms\\
+reverse string                      & 18,959 & 88.2\,s  & 854\,ms\\
+parity check                        & 21,740 & 32.3\,s  & 1.32\,s\\
+even pairs, C--GNF                  & 783    & 4.79\,s  & 73\,ms\\
+reverse string, C--GNF              & 183    & 654\,ms  & 29\,ms\\
+cycle navigation, C--GNF            & 266    & 371\,ms  & 46\,ms\\
+parity check, C--GNF                & 227    & 194\,ms  & 28\,ms\\
+robots, linear (Popper)             & 35     & 8.84\,s  & 4.4\,ms\\
+even and odd (Louise)               & 45     & 17.9\,ms & 2.8\,ms\\
+grandparent with invention (Popper) & 55     & 10.9\,ms & 3.8\,ms\\
+points-to, Andersen (Popper)        & 22     & 7.3\,ms  & 2.3\,ms\\
+list membership (Hopper)            & 2      & 3.4\,ms  & 4.3\,ms\\
+ancestor (Popper)                   & 3      & 1.5\,ms  & 0.5\,ms\\
+Inverse probe                       & 1      & 0.9\,ms  & 0.2\,ms\\
 \midrule
 cycle navigation                    & 1,581,602$^*$ & not in 200\,s & 8.6\,s$^*$\\
 even pairs                          & 1,125,904$^*$ & not in 200\,s & 3.7\,s$^*$\\
 robots, recursion (Popper)          & 3$^*$  & not in 200\,s & 98\,ms$^*$\\
 \bottomrule
 \end{tabular}
-\caption{Poker against the forest on task files from other benchmarks (single runs,
-the forest's time including Poker's post-processing). $^*$Distinct supports and the
-time to compute them, before post-processing.}
+\caption{Poker against the forest on task files from other benchmarks, each with its
+own clause limit and without reuse (single runs of \nolinkurl{compare_with_poker.pl}
+with a 16\,GB stack, wall-clock, the forest's time including Poker's
+post-processing). C--GNF: weak Chomsky--Greibach constraints. $^*$Distinct supports
+and the time to compute them, before post-processing, from an earlier run of the
+forest alone.}
 \label{tab:survey}
 \end{table}
 
-The forest is slower than Poker only on list membership, where Poker's search is
-shallow and the forest's memo tables cost more than they save.
+
+\subsection{The same algorithm in C}
+
+CeTTa, a MeTTa runtime, has a learner built on the same recurrences, with the
+supports computed by a provenance kernel written in C. It takes the problem grounded
+into MeTTa, which needs the background knowledge to be facts, as it is for the six
+context-free languages. On iterations 1, 3 and the last of each of their ranges,
+seeds 1 to 3 (54 problems, 1,068 examples), its supports equal the SWI forest's,
+as sets, for every example. Table~\ref{tab:cetta} gives its times: they are of the
+supports alone, without Poker's post-processing, and do not include grounding the
+problem. Where the SWI forest is slowest, on $a^nb^n$ and the parentheses, the C
+kernel is 7 and 58 times faster than it at the last iteration, and 9 and 47 times
+faster than Poker: the SWI forest's cost there lies in its representation (tabled
+answers and list unions) more than in the recurrence.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Language & $l$ & Poker, \nolinkurl{generalise/3} & SWI forest, supports & CeTTa, supports\\
+\midrule
+even parity    & 21 & 5.83\,s & 46.8\,ms & 4.55\,ms\\
+$a^nb^n$       & 21 & 1.69\,s & 1.28\,s  & 186\,ms\\
+equal $a$, $b$ & 21 & 2.55\,s & 271\,ms  & 13.8\,ms\\
+$a^nb^m$       & 15--20 & 1.43\,s & 142\,ms  & 5.2\,ms\\
+palindrome     & 21 & 11.8\,s & 3.4\,ms  & 2.5\,ms\\
+parentheses    & 21 & 3.71\,s & 4.55\,s  & 79\,ms\\
+\bottomrule
+\end{tabular}
+\caption{The last iteration of each context-free range: medians over seeds 1 to 3
+(Poker's over 1 to 5, from Table~\ref{tab:aaai-gen}). Poker's time includes its
+post-processing; the forests' times are of the supports alone.}
+\label{tab:cetta}
+\end{table}
+
 
 \section{Scope}
 
 \begin{itemize}
-\item The decomposition assumes that a refutation resolves goals against background
-  knowledge and metarules only, not against clauses of the hypothesis being built,
-  so that every step instantiates a metarule and the clause limit bounds the steps.
-  This is the setting of the $a^nb^n$ experiment: there Poker finds no refutation of
-  $a^3b^3$ at limit 4, although a grammar of three clauses derives it in five steps.
-  With reuse the forest computes a least fixpoint instead
-  (Section~\ref{sec:poker}), whose ground law is proved; that the invention state
-  threaded in depth-first order matches Vanilla's is checked against Poker, not
-  proved.
+\item Without hypothesis reuse the forest computes the graded recurrence of
+  Section~\ref{sec:decomposition}; with reuse it computes the bounded least fixpoint
+  of Section~\ref{sec:poker}. Both laws are proved for ground derivation forests;
+  that the depth-first invention state makes the forest's items correspond to
+  Vanilla's refutations is checked against Poker, not proved.
 \item The forest replaces the generalisation step only. Poker's other stages are
   unchanged, and they still receive every sub-hypothesis as a list; they could work
-  on the forest itself, which represents the same family compactly.
+  on the forest itself, which represents the same family compactly. On the
+  L-systems with many generated examples these stages take most of the time
+  (Table~\ref{tab:aaai-learn}).
+\item With reuse, the forest's per-goal families are not limited by the budget that
+  the rest of a refutation leaves, while Vanilla's search, which carries the
+  metasubstitutions found so far, is. On long examples at small clause limits, and
+  as \texttt{max\_invented} grows, the forest's families grow faster than Poker's
+  search (Section~\ref{sec:results}).
 \end{itemize}
 
 \section{Running it}
 
-The forest is in \texttt{lib/forest}; tasks and scripts are in
-\texttt{data/forest\_examples}. With Poker selected as the learner in
+The forest is in \nolinkurl{lib/forest}; tasks and scripts are in
+\nolinkurl{data/forest_examples}. With Poker selected as the learner in
 \texttt{configuration.pl}, from Vanilla's root,
 \begin{quote}\small
 \texttt{swipl data/forest\_examples/compare\_with\_poker.pl TARGET EXPERIMENT [K]}
 \end{quote}
-compares the two \texttt{generalise/3} on an experiment file, for example with
-TARGET \texttt{s/2} and EXPERIMENT \texttt{data/poker\_examples/anbn\_poker.pl};
+compares the two \nolinkurl{generalise/3} on an experiment file, for example with
+TARGET \nolinkurl{s/2} and EXPERIMENT \nolinkurl{data/poker_examples/anbn_poker.pl}.
+In the same directory,
+\begin{itemize}
+\item \nolinkurl{poker_comparison.pl} \texttt{[N [K]]} does so on $a^Nb^N$ at any size;
+\item \nolinkurl{random_problems.sh} runs the 80 random problems;
+\item \nolinkurl{benchmarks/survey/run_survey.sh} runs the task files of
+  Table~\ref{tab:survey} and Poker's settings with reuse.
+\end{itemize}
+The AAAI-26 benchmark needs a clone of the paper's code appendix:
 \begin{quote}\small
-\texttt{swipl data/forest\_examples/poker\_comparison.pl [N [K]]}
+\texttt{data/forest\_examples/benchmarks/aaai26/setup\_aaai26.sh CLONE WORK}\\
+\texttt{data/forest\_examples/benchmarks/aaai26/run\_aaai26.sh WORK OUT 1 gen}
 \end{quote}
-does so on $a^Nb^N$ at any size; and
-\begin{quote}\small
-\texttt{data/forest\_examples/random\_problems.sh}
-\end{quote}
-runs all 80 random problems.
-In a Prolog session, \texttt{use\_forest} makes Poker's \texttt{learn/1} use the forest.
-The forest was first written in MeTTa, where each memo table is a space of shared
-immutable terms indexed by their arguments; the files here are its port to
-SWI-Prolog, with the memo tables as asserted facts keyed by a variant hash or as
-tabled predicates.
+and likewise \texttt{learn}, \texttt{readoff} and \texttt{tune}; \texttt{summarise.pl}
+tabulates the rows. In a Prolog session, \texttt{use\_forest} makes Poker's
+\nolinkurl{learn/1} use the forest. The forest was first written in MeTTa, where each
+memo table is a space of shared immutable terms indexed by their arguments; the files
+here are its port to SWI-Prolog, with the memo tables as asserted facts keyed by a
+variant hash or as tabled predicates.
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
 \bibitem{bkt} P.~Buneman, S.~Khanna and W.-C.~Tan. Why and where: a characterization
   of data provenance. ICDT 2001.
 \bibitem{gkt} T.~J.~Green, G.~Karvounarakis and V.~Tannen. Provenance semirings.
@@ -371,6 +795,18 @@ tabled predicates.
   failures. Machine Learning 110, 2021.
 \bibitem{hopper} S.~J.~Purga\l{}, D.~M.~Cerna and C.~Kaliszyk. Learning higher-order
   logic programs from failures. IJCAI 2022.
+\bibitem{ssilp} S.~Patsantzis. Self-supervised inductive logic programming. In
+  \emph{Proceedings of the 40th AAAI Conference on Artificial Intelligence
+  (AAAI-26)}, pages 19337--19344, 2026.
+\bibitem{ssilpcode} S.~Patsantzis. Code appendix of \emph{Self-supervised inductive
+  logic programming}. \url{https://github.com/stassa/aaai_26_experiments}, commit
+  a446fca.
+\bibitem{trewern} J.~Trewern, S.~Patsantzis and A.~Tamaddoni-Nezhad.
+  Meta-interpretive learning as second-order resolution. IJCLR 2024.
+\bibitem{abop} P.~Prusinkiewicz and A.~Lindenmayer. \emph{The Algorithmic Beauty of
+  Plants}. Springer, 1990.
+\bibitem{swipl} J.~Wielemaker, T.~Schrijvers, M.~Triska and T.~Lager. SWI-Prolog.
+  \emph{Theory and Practice of Logic Programming} 12(1--2), 2012.
 \end{thebibliography}
 
 \end{document}

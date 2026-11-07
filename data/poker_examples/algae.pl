@@ -12,6 +12,7 @@
 :-use_module(lib(poker/poker_configuration),[]).
 :-use_module(lib(poker/poker_auxiliaries)).
 :-use_module(data(poker_examples/test_harness)).
+:-use_module(data(poker_examples/language_generation)).
 :-use_module(lib(poker/normal_forms/lindenmayer_normal_form)).
 
 /** <module> Learn a simple L-System grammar.
@@ -309,7 +310,7 @@ background_knowledge(s/3,[a/2
 metarules(s/3,[ls_constant,ls_variable,ls_base,chain,tri_chain]).
 
 labelled_example(s/3,E):-
-	generate_initial(algae,all,0,4,Es)
+	generate_initial(algae(all,0,4),s/3,Es)
         ,member(E,Es).
 
 unlabelled_example(s/3,_):- fail.

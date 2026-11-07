@@ -12,6 +12,7 @@
 :-use_module(lib(poker/poker_configuration),[]).
 :-use_module(lib(poker/poker_auxiliaries)).
 :-use_module(data(poker_examples/test_harness)).
+:-use_module(data(poker_examples/language_generation)).
 :-use_module(lib(poker/normal_forms/chomsky_greibach_normal_form)).
 
 /** <module> Learn even parity by inventing odd parity with Poker.
@@ -304,7 +305,7 @@ metarules(q0/2,[identity,chain]).
 
 labelled_example(q0/2,E):-
 % Generates all even-parity bit-strings of length between 0 to 4.
-	generate_initial(even,all,0,4,Es)
+	generate_initial(even(all,0,4),q0/2,Es)
         ,member(E,Es).
 
 unlabelled_example(q0/2,_):- fail.

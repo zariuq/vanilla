@@ -25,9 +25,11 @@ within the clause limit, the set of metasubstitutions the refutation uses. Vanil
 enumerates these refutations one at a time, and their number grows exponentially
 with the clause limit. The provenance forest computes the same sets by dynamic
 programming: it solves each first-order goal once for each exact size, and builds
-the sets of a refutation from those of its parts. On Poker's $a^nb^n$ experiment it
-returns exactly Poker's sub-hypotheses in every case compared, for example the same
-18 at $a^4b^4$ with clause limit 7 in 3.4\,ms where Poker takes 218\,s.
+the sets of a refutation from those of its parts. It reads Vanilla's own problem
+and runs behind Poker's \texttt{generalise/3}. On Poker's experiments and on 80
+random grammar-learning problems its output is identical to Poker's in every case
+compared, for example the same 9,941 sub-hypotheses of $a^3b^3$ at clause limit 7 in
+0.69\,s where Poker takes 225\,s.
 \end{abstract}
 
 \section{The problem}
@@ -100,21 +102,26 @@ Lean's standard ones, together with positive and negative examples.
 
 \section{From ground forests to MIL goals}
 
-In meta-interpretive learning the forest is not given in advance. A goal is
-$P(x, Y)$ with $x$ known; the body of Chain, $Q(X, Z), R(Z, Y)$, introduces an
-existential $Z$ that is known only once $Q(x, Z)$ is solved. The forest therefore
-works in two passes over memo tables keyed by goal and size.
+In meta-interpretive learning the forest is not given in advance. A goal is an
+encapsulated literal $P(a_1, \ldots, a_k)$ with some arguments bound; the body of
+Chain, $Q(X, Z), R(Z, Y)$, introduces an existential $Z$ that is known only once
+$Q(x, Z)$ is solved. The forest therefore works in two passes over memo tables
+keyed by goal (up to variable renaming) and size.
 
-\paragraph{Pass 1: endpoints.} $\mathit{reach}(P, x, n)$ is the set of endpoints $y$
-such that $P(x, y)$ has a refutation of size exactly $n$. A body is solved left to
-right: the size $n - 1$ is split among the literals, and the endpoints of each
-literal at its share instantiate the next literal's input. A literal of size $0$ is
-answered by $B$; a literal of positive size is a target or invented predicate,
-answered by $\mathit{reach}$ itself.
+\paragraph{Pass 1: instances.} $\mathit{reach}(g, n)$ is the set of instances of the
+goal $g$ that have a refutation of size exactly $n$. A body is solved left to right:
+the size $n - 1$ is split among the literals, and the instances of each literal at
+its share bind the variables the next literals share with it. A literal of size $0$
+is answered by $B$; a literal of positive size is a target or invented predicate,
+answered by $\mathit{reach}$ itself. A literal is memoised as its call pattern: when
+an argument before the last is bound, the last is left open, as the output of a
+grammar rule or a function, so that every call on the same input shares one entry.
+Solving a more general goal and unifying its answers with the literal gives exactly
+the literal's answers, so the pattern affects only the cost.
 
-\paragraph{Pass 2: supports.} $\mathit{fam}(P, x, y, n)$ is $\F_n(P(x,y))$, built by
-the recurrence, but only over the splittings pass 1 found feasible. By the pruning
-lemma this loses nothing.
+\paragraph{Pass 2: supports.} $\mathit{fam}(i, n)$ is $\F_n(i)$ for an instance $i$,
+built by the recurrence, but only over the splittings pass 1 found feasible. By the
+pruning lemma this loses nothing.
 
 \paragraph{Invented predicates.} Each memo key also carries which invented predicates
 are available: the $i$-th invented predicate may head a clause only once the
@@ -124,10 +131,42 @@ of the ground forest is then a goal together with this state, and the theorem
 applies unchanged.
 
 \paragraph{Metarule constraints.} Poker's constraints, such as $P \neq Q$ in Chain,
-are tests on a single metasubstitution. They are applied as soon as a
-metasubstitution is built, comparing symbols with \texttt{==} so that a symbol not
-yet bound passes. A constraint on one metasubstitution removes edges from the forest
-and does not interact with the decomposition.
+are tests on a single metasubstitution. The forest calls Vanilla's own check on
+each metasubstitution when it is built and again as its body literals bind its
+symbols; the constraints compare symbols with \texttt{==}, so that a symbol not yet
+bound passes. A constraint on one metasubstitution removes edges from the forest and does
+not interact with the decomposition.
+
+\section{Behind Poker's API}
+
+The forest reads a Vanilla MIL problem as Poker does: the encapsulated metarules,
+the background knowledge Vanilla writes to the \texttt{user} module, the
+configuration's metarule constraints, and Poker's signature of the target and its
+invented predicates. \texttt{forest\_generalise/3} answers as Poker's
+\texttt{generalise/3}: it computes each positive example's sub-hypotheses with the
+forest and passes them through Poker's own constraint check, sorting, unfolding and
+renaming of invented predicates, so the two outputs can be compared as Prolog terms.
+\texttt{use\_forest/0} wraps \texttt{generalise/3}, so Poker's \texttt{learn/1} runs
+on the forest unchanged; it falls back to Vanilla wherever the forest does not
+apply.
+
+The forest applies where Vanilla resolves goals against background knowledge and
+metarules only (\texttt{fetch\_clauses} without \texttt{hypothesis}), keeps every
+proof, and generalises examples one at a time without threads. Several of Poker's
+experiments are written that way ($a^nb^n$, parity, and the experiment scripts for
+the binary and weak Chomsky--Greibach and the Lindenmayer normal forms); others use
+Vanilla's default, which also resolves goals against hypothesis clauses already
+built.
+
+\section{Why-provenance}
+
+$\F_n(g)$ is the why-provenance of $g$ (Buneman, Khanna and Tan, 2001), restricted
+to derivations of size $n$, with metasubstitutions in the place of database tuples.
+In the semiring view of provenance (Green, Karvounarakis and Tannen, 2007) its
+values are sets of sets, added by union over alternative derivations and multiplied
+by pairwise union over the literals of a body. Grading by size keeps the family
+finite for recursive targets, and the theorem above is the statement that the graded
+fixpoint is the provenance of the derivation trees.
 
 \section{Cost}
 
@@ -139,33 +178,44 @@ the number of refutations instead, and of the partial ones that fail, a number t
 grows exponentially with $K$ even when the number of distinct supports does not: at
 $a^4b^4$, limit 7, there are 18 supports.
 
-Table~\ref{tab:results} reports Poker's \texttt{generalise/3} and the forest on the
-same problems, in SWI-Prolog 10.1.9. The sets of sub-hypotheses are identical in
-every row. At limits too small to fit any refutation both return none (Poker's
-\texttt{generalise/3} fails, which the comparison reads as none).
+Table~\ref{tab:results} reports Poker's \texttt{generalise/3} and
+\texttt{forest\_generalise/3} on the same problems, in SWI-Prolog 10.1.9. Their
+outputs, Poker's sub-hypotheses after its own sorting and renaming, are identical as
+Prolog terms in every row; the forest's times include that post-processing. At
+limits too small to fit any refutation neither has an answer: Poker's
+\texttt{generalise/3} fails, and so does the forest's, through the same
+post-processing ($a^3b^3$ at $K = 4$: 97.7\,ms against 1.1\,ms).
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \begin{tabular}{lrrrrr}
 \toprule
-Task & Sub-hypotheses & \multicolumn{2}{c}{Poker} & \multicolumn{2}{c}{Forest}\\
-     &               & time & inferences & time & inferences\\
+Problem & Sub-hypotheses & \multicolumn{2}{c}{Poker} & \multicolumn{2}{c}{Forest}\\
+        &               & time & inferences & time & inferences\\
 \midrule
-$a^1b^1$, $K=1$ & 1     & 0.9\,ms  & 5,956          & 0.2\,ms  & 1,804\\
-$a^2b^2$, $K=3$ & 4     & 9.3\,ms  & 199,702        & 0.4\,ms  & 6,399\\
-$a^2b^2$, $K=5$ & 1,449 & 1.68\,s  & 35,883,880     & 6.9\,ms  & 79,931\\
-$a^3b^3$, $K=5$ & 10    & 1.20\,s  & 29,253,930     & 1.1\,ms  & 23,176\\
-$a^3b^3$, $K=7$ & 9,941 & 219\,s   & 5,348,394,103  & 124\,ms  & 711,019\\
-$a^4b^4$, $K=7$ & 18    & 218\,s   & 5,134,352,712  & 3.4\,ms  & 65,625\\
+$a^1b^1$, $K=1$ & 1     & 1.0\,ms  & 6,164          & 0.1\,ms  & 1,527\\
+$a^2b^2$, $K=3$ & 4     & 9.5\,ms  & 199,910        & 0.9\,ms  & 13,945\\
+$a^2b^2$, $K=5$ & 1,449 & 1.72\,s  & 35,884,088     & 82\,ms   & 1,931,700\\
+$a^3b^3$, $K=5$ & 10    & 1.21\,s  & 29,254,138     & 3.3\,ms  & 58,700\\
+$a^3b^3$, $K=7$ & 9,941 & 226\,s   & 5,348,394,311  & 694\,ms  & 17,197,057\\
+$a^4b^4$, $K=7$ & 18    & 210\,s   & 5,134,352,920  & 9.9\,ms  & 164,296\\
+parity, $K=5$   & 362   & 570\,ms  & 4,971,836      & 68\,ms   & 949,044\\
 \bottomrule
 \end{tabular}
-\caption{Poker against the forest on Poker's $a^nb^n$ experiment (single runs; the
-inference counts are exact).}
+\caption{Poker against the forest on Poker's $a^nb^n$ experiment at several sizes and
+on its parity experiment (16 examples), single runs; the inference counts are
+exact.}
 \label{tab:results}
 \end{table}
 
-On its own the forest takes 7.1\,ms on $a^5b^5$ at $K = 9$ and 32\,ms on $a^7b^7$ at
-$K = 13$.
+On 80 random grammar-learning problems (terminals, metarules among Identity, Chain
+and Tri-chain, constraints, one example string of length 0 to 5, clause limits 1 to 4,
+0 to 2 invented predicates) the two outputs are identical in all 80: 50 have
+sub-hypotheses, the largest 19,073; Poker takes 105\,s in all and the forest
+1.7\,s. Poker's \texttt{learn/1} on parity learns the same five-clause grammar of
+even parity, with an invented predicate, on the forest as on Vanilla, in 173\,ms
+against 629\,ms. Without Poker's post-processing the forest computes the supports of
+$a^5b^5$ at $K = 9$ in 16\,ms and of $a^7b^7$ at $K = 13$ in 67\,ms.
 
 \section{Scope}
 
@@ -176,25 +226,42 @@ $K = 13$.
   This is the setting of the $a^nb^n$ experiment: there Poker finds no refutation of
   $a^3b^3$ at limit 4, although a grammar of three clauses derives it in five steps.
   When hypothesis clauses can be reused, size is no longer additive; extending the
-  forest to that setting is open.
+  forest to that setting, as a fixpoint over the size-truncated families, is the
+  next step.
 \item The forest replaces the generalisation step only. Poker's other stages are
-  unchanged.
-\item Tasks are currently given in the forest's own encoding; reading Vanilla
-  experiment files directly is the next step.
+  unchanged, and they still receive every sub-hypothesis as a list; they could work
+  on the forest itself, which represents the same family compactly.
 \end{itemize}
 
 \section{Running it}
 
 The forest is in \texttt{lib/forest}; tasks and scripts are in
-\texttt{data/forest\_examples}. From Vanilla's root, with Poker selected as the
-learner in \texttt{configuration.pl},
-\begin{center}
-\texttt{swipl data/forest\_examples/poker\_comparison.pl N K}
-\end{center}
-runs both learners on $a^Nb^N$ at clause limit $K$ and compares their sub-hypotheses
-as sets of sets. The forest was first written in MeTTa, where each memo table is a
-space of shared immutable terms indexed by their arguments; the files here are its
-port to SWI-Prolog, with the memo tables as asserted facts keyed by term hash or as
+\texttt{data/forest\_examples}. With Poker selected as the learner in
+\texttt{configuration.pl}, from Vanilla's root,
+\begin{quote}\small
+\texttt{swipl data/forest\_examples/compare\_with\_poker.pl TARGET EXPERIMENT [K]}
+\end{quote}
+compares the two \texttt{generalise/3} on an experiment file, for example with
+TARGET \texttt{s/2} and EXPERIMENT \texttt{data/poker\_examples/anbn\_poker.pl};
+\begin{quote}\small
+\texttt{swipl data/forest\_examples/poker\_comparison.pl [N [K]]}
+\end{quote}
+does so on $a^Nb^N$ at any size; and
+\begin{quote}\small
+\texttt{data/forest\_examples/random\_problems.sh}
+\end{quote}
+runs all 80 random problems.
+In a Prolog session, \texttt{use\_forest} makes Poker's \texttt{learn/1} use the forest.
+The forest was first written in MeTTa, where each memo table is a space of shared
+immutable terms indexed by their arguments; the files here are its port to
+SWI-Prolog, with the memo tables as asserted facts keyed by a variant hash or as
 tabled predicates.
+
+\begin{thebibliography}{9}
+\bibitem{bkt} P.~Buneman, S.~Khanna and W.-C.~Tan. Why and where: a characterization
+  of data provenance. ICDT 2001.
+\bibitem{gkt} T.~J.~Green, G.~Karvounarakis and V.~Tannen. Provenance semirings.
+  PODS 2007.
+\end{thebibliography}
 
 \end{document}

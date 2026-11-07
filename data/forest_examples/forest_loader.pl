@@ -10,6 +10,6 @@ user:file_search_path(forest, forest_examples('../../lib/forest')).
 % directory.
 load_forest(Memo, Task) :-
     atom_concat(memo_, Memo, MemoFile),
-    load_files(forest:[forest(forest), forest(MemoFile), forest(metarules),
-                       forest_examples(Task)],
+    load_files(forest:[forest(forest), forest(forest_tasks), forest(MemoFile),
+                       forest(metarules), forest_examples(Task)],
                [if(true)]).
